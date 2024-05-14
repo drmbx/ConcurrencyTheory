@@ -35,12 +35,12 @@ namespace Test {
         map["Sin"] = Sin;
         map["Sqrt"] = Sqrt;
         map["Pow"] = Pow;
-        size_t id;
-        std::string taskString;
-        Task taskType;
-        T res, x, y, a;
-        bool okFlag = false;
-        while (inputStream && !okFlag) {
+        size_t id{};
+        std::string taskString{};
+        Task taskType{};
+        T res{}, x{}, y{}, a{};
+        bool okFlag{true};
+        while (inputStream && okFlag) {
             inputStream >> id >> taskString;
             taskType = map[taskString];
             if (taskType == Pow)
@@ -48,22 +48,24 @@ namespace Test {
             else
                 inputStream >> res >> x;
             switch (taskType) {
-                case Sin:
-                    a = fun_sin(x, static_cast<T>(0));
-                    if (((fun_sin(x, static_cast<T>(0)) - res) > 0.1) ||
-                        ((fun_sin(x, static_cast<T>(0)) - res) < 0.1))
-                        okFlag = true;
+                case Sin: {
+                    T awaited = fun_sin(x, static_cast<T>(0));
+                    if (std::abs(res - awaited) > 0.1)
+                        okFlag = false;
                     break;
-                case Sqrt:
-                    if (((fun_sqrt(x, static_cast<T>(0)) - res) > 0.1) ||
-                        ((fun_sqrt(x, static_cast<T>(0)) - res) < 0.1))
-                        okFlag = true;
+                }
+                case Sqrt: {
+                    T awaited = fun_sqrt(x, static_cast<T>(0));
+                    if (std::abs(res - awaited) > 0.1)
+                        okFlag = false;
                     break;
-                case Pow:
-                    if (((fun_pow(x, y) - res) > 0.1) ||
-                        ((fun_pow(x, y) - res) < 0.1))
-                        okFlag = true;
+                }
+                case Pow: {
+                    T awaited = fun_pow(x, y);
+                    if (std::abs(res - awaited) > 0.1)
+                        okFlag = false;
                     break;
+                }
             }
         }
         return okFlag;
@@ -80,14 +82,7 @@ private:
     std::jthread serverThread;
 
     void Work(const std::stop_token &stopToken) {
-        while (!stopToken.stop_requested()) {
-            {
-                std::lock_guard guard(queueMutex);
-                if (taskQueue.empty()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    continue;
-                }
-            }
+        while (!taskQueue.empty()) {
             queueMutex.lock();
             std::tuple<Task, T, T> task = taskQueue.front();
             queueMutex.unlock();
@@ -110,7 +105,9 @@ private:
     }
 
 public:
-    Server() : taskId{}, serverThread{} {}
+    Server() :
+            taskId{},
+            serverThread{} {}
 
     void Start() {
         serverThread = std::jthread(&Server::Work, this);
@@ -118,6 +115,10 @@ public:
 
     void Stop() {
         serverThread.request_stop();
+    }
+
+    void Join() {
+        serverThread.join();
     }
 
     size_t AddTask(Task taskType, T x, T y) {
@@ -150,7 +151,7 @@ public:
         });
     }
 
-    void Join(){
+    void Join() {
         thread.join();
     }
 
@@ -162,6 +163,7 @@ private:
 
 template<typename T>
 std::vector<std::tuple<std::string, T, T, T>> Process() {
+
     auto server = new Server<T>();
     auto client_sin = new Client<T>(*server, Sin);
     auto client_sqrt = new Client<T>(*server, Sqrt);
@@ -177,8 +179,8 @@ std::vector<std::tuple<std::string, T, T, T>> Process() {
 
     server->Start();
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
     server->Stop();
+    server->Join();
 
     auto results = server->GetResult();
     delete server;
