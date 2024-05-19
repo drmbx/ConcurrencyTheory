@@ -82,7 +82,7 @@ private:
     std::jthread serverThread;
 
     void Work(const std::stop_token &stopToken) {
-        while (!taskQueue.empty()) {
+        while (!taskQueue.empty() || !stopToken.stop_requested()) {
             queueMutex.lock();
             std::tuple<Task, T, T> task = taskQueue.front();
             queueMutex.unlock();
@@ -140,12 +140,12 @@ public:
 template<typename T>
 class Client {
 public:
-    Client(const Server<T> &server, Task taskType) :
+    Client(Server<T> &server, Task taskType) :
             server((Server<T> &) server),
             taskType(taskType) {}
 
     void Start(int N) {
-        thread = std::jthread([N, this] {
+        thread = std::thread([N, this] {
             for (int i = 0; i < N; ++i)
                 server.AddTask(taskType, rand() % 100, rand() % 4);
         });
@@ -158,36 +158,31 @@ public:
 private:
     Server<T> &server;
     Task taskType;
-    std::jthread thread;
+    std::thread thread;
 };
 
 template<typename T>
 std::vector<std::tuple<std::string, T, T, T>> Process() {
 
-    auto server = new Server<T>();
-    auto client_sin = new Client<T>(*server, Sin);
-    auto client_sqrt = new Client<T>(*server, Sqrt);
-    auto client_pow = new Client<T>(*server, Pow);
+    auto server = std::make_shared<Server<T>>();
+    auto client_sin = std::make_unique<Client<T>>(*server, Sin);
+    auto client_sqrt = std::make_unique<Client<T>>(*server, Sqrt);
+    auto client_pow = std::make_unique<Client<T>>(*server, Pow);
 
     client_sin->Start(10000);
     client_sqrt->Start(10000);
     client_pow->Start(10000);
 
+    server->Start();
+
     client_sin->Join();
     client_sqrt->Join();
     client_pow->Join();
 
-    server->Start();
-
     server->Stop();
     server->Join();
 
-    auto results = server->GetResult();
-    delete server;
-    delete client_sin;
-    delete client_sqrt;
-    delete client_pow;
-    return std::move(results);
+    return std::move(server->GetResult());
 }
 
 int main() {
