@@ -30,6 +30,8 @@ def predict_work(in_queue: Queue, out_queue: Queue, stop_event: Event):
 if __name__ == "__main__":
     num_threads, video_path, output_file = parse()
 
+    start_time = time.time()
+
     in_video = cv2.VideoCapture(video_path)
 
     stop_event = Event()
@@ -59,3 +61,7 @@ if __name__ == "__main__":
         threads[i].join()
     in_video.release()
     out_video.release()
+
+    end_time = time.time()
+
+    print(f"Elapsed time: {round(end_time - start_time, 2)}")

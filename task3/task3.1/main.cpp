@@ -3,7 +3,6 @@
 #include <vector>
 #include <algorithm>
 #include <functional>
-#include <iomanip>
 #include <chrono>
 
 std::chrono::duration<double> Multiplication(int N, int threadAmount) {
