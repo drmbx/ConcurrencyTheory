@@ -91,6 +91,8 @@ private:
                 std::unique_lock lck(m);
                 cv.wait(lck);
             }
+            if (taskQueue.empty())
+                break;
             std::unique_lock lck(queueMutex);
             std::tuple<Task, T, T> task(taskQueue.front());
             lck.unlock();
@@ -98,13 +100,13 @@ private:
             T y = get<2>(task);
             switch (get<0>(task)) {
                 case Sin:
-                    results.push_back({"Sin", fun_sin(x, y), x, y});
+                    results.emplace_back("Sin", fun_sin(x, y), x, y);
                     break;
                 case Sqrt:
-                    results.push_back({"Sqrt", fun_sqrt(x, y), x, y});
+                    results.emplace_back("Sqrt", fun_sqrt(x, y), x, y);
                     break;
                 case Pow:
-                    results.push_back({"Pow", fun_pow(x, y), x, y});
+                    results.emplace_back("Pow", fun_pow(x, y), x, y);
                     break;
             }
             std::lock_guard guard(queueMutex);
@@ -123,6 +125,7 @@ public:
 
     void Stop() {
         serverThread.request_stop();
+        Notify();
     }
 
     void Join() {
@@ -193,7 +196,6 @@ std::vector<std::tuple<std::string, T, T, T>> Process() {
     client_sqrt->Join();
     client_pow->Join();
 
-    server->Notify();
     server->Stop();
     server->Join();
 
