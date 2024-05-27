@@ -6,6 +6,8 @@
 #include <iomanip>
 #include <fstream>
 #include <memory>
+#include <mutex>
+#include <condition_variable>
 
 enum Task {
     Sin,
@@ -80,12 +82,18 @@ private:
     size_t taskId;
     std::vector<std::tuple<std::string, T, T, T>> results;
     std::jthread serverThread;
+    std::condition_variable cv;
 
     void Work(const std::stop_token &stopToken) {
         while (!taskQueue.empty() || !stopToken.stop_requested()) {
-            queueMutex.lock();
-            std::tuple<Task, T, T> task = taskQueue.front();
-            queueMutex.unlock();
+            if (taskQueue.empty()) {
+                std::mutex m;
+                std::unique_lock lck(m);
+                cv.wait(lck);
+            }
+            std::unique_lock lck(queueMutex);
+            std::tuple<Task, T, T> task(taskQueue.front());
+            lck.unlock();
             T x = get<1>(task);
             T y = get<2>(task);
             switch (get<0>(task)) {
@@ -134,6 +142,10 @@ public:
     std::vector<std::tuple<std::string, T, T, T>> GetResult() {
         return std::move(results);
     }
+
+    void Notify() {
+        cv.notify_one();
+    }
 };
 
 
@@ -146,8 +158,10 @@ public:
 
     void Start(int N) {
         thread = std::thread([N, this] {
-            for (int i = 0; i < N; ++i)
+            for (int i = 0; i < N; ++i) {
                 server.AddTask(taskType, rand() % 100, rand() % 4);
+                server.Notify();
+            }
         });
     }
 
@@ -179,6 +193,7 @@ std::vector<std::tuple<std::string, T, T, T>> Process() {
     client_sqrt->Join();
     client_pow->Join();
 
+    server->Notify();
     server->Stop();
     server->Join();
 
