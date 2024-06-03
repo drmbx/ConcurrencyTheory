@@ -78,6 +78,7 @@ template<typename T>
 class Server {
 private:
     std::mutex queueMutex;
+    std::mutex pauseMutex;
     std::queue<std::tuple<Task, T, T>> taskQueue;
     size_t taskId;
     std::vector<std::tuple<std::string, T, T, T>> results;
@@ -85,14 +86,11 @@ private:
     std::condition_variable cv;
 
     void Work(const std::stop_token &stopToken) {
-        while (!taskQueue.empty() || !stopToken.stop_requested()) {
+        while (!stopToken.stop_requested()) {
             if (taskQueue.empty()) {
-                std::mutex m;
-                std::unique_lock lck(m);
+                std::unique_lock lck(queueMutex);
                 cv.wait(lck);
             }
-            if (taskQueue.empty())
-                break;
             std::unique_lock lck(queueMutex);
             std::tuple<Task, T, T> task(taskQueue.front());
             lck.unlock();
@@ -125,7 +123,6 @@ public:
 
     void Stop() {
         serverThread.request_stop();
-        Notify();
     }
 
     void Join() {
@@ -135,6 +132,7 @@ public:
     size_t AddTask(Task taskType, T x, T y) {
         std::lock_guard guard(queueMutex);
         taskQueue.emplace(taskType, x, y);
+        cv.notify_one();
         return taskId++;
     }
 
@@ -144,10 +142,6 @@ public:
 
     std::vector<std::tuple<std::string, T, T, T>> GetResult() {
         return std::move(results);
-    }
-
-    void Notify() {
-        cv.notify_one();
     }
 };
 
@@ -161,10 +155,8 @@ public:
 
     void Start(int N) {
         thread = std::thread([N, this] {
-            for (int i = 0; i < N; ++i) {
+            for (int i = 0; i < N; ++i)
                 server.AddTask(taskType, rand() % 100, rand() % 4);
-                server.Notify();
-            }
         });
     }
 
@@ -180,17 +172,16 @@ private:
 
 template<typename T>
 std::vector<std::tuple<std::string, T, T, T>> Process() {
-
     auto server = std::make_shared<Server<T>>();
     auto client_sin = std::make_unique<Client<T>>(*server, Sin);
     auto client_sqrt = std::make_unique<Client<T>>(*server, Sqrt);
     auto client_pow = std::make_unique<Client<T>>(*server, Pow);
 
+    server->Start();
+
     client_sin->Start(10000);
     client_sqrt->Start(10000);
     client_pow->Start(10000);
-
-    server->Start();
 
     client_sin->Join();
     client_sqrt->Join();
