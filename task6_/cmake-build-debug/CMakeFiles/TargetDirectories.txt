@@ -1,0 +1,3 @@
+/home/drmbx/study/concurrency_theory/task6_/cmake-build-debug/CMakeFiles/task6.dir
+/home/drmbx/study/concurrency_theory/task6_/cmake-build-debug/CMakeFiles/edit_cache.dir
+/home/drmbx/study/concurrency_theory/task6_/cmake-build-debug/CMakeFiles/rebuild_cache.dir

@@ -5,6 +5,7 @@
 #include <boost/program_options.hpp>
 #include "nvtx3/nvToolsExt.h"
 #include <openacc.h>
+#include <cublas_v2.h>
 
 void PrintMatrix(const double *grid, size_t n) {
 #pragma acc update host(grid[0:n*n])
@@ -40,7 +41,8 @@ int ProgramOptions(int argc, char **argv, double &epsilon, size_t &n, size_t &n_
     return 1;
 }
 
-void InitializeGrid(double *grid, double *new_grid, size_t n, double val0, double val1, double val2, double val3) {
+void InitializeGrid(double *grid, double *new_grid, size_t n, double val0, double val1, double val2,
+                    double val3) {
     auto const Interpolation = [](size_t x, size_t x0, size_t x1, double f_x0, double f_x1) {
         return f_x0 + ((f_x1 - f_x0) / static_cast<double>(x1 - x0)) * static_cast<double>(x - x0);
     };
@@ -76,20 +78,32 @@ void Deallocate(double *grid, double *new_grid) {
     delete[](new_grid);
 }
 
-double CalculateNext(const double *grid, double *new_grid, size_t n) {
-    double error{};
-#pragma acc parallel loop reduction(max:error) present(grid, new_grid)
-    for (size_t y = 1; y < n - 1; ++y) {
-#pragma acc loop
-        for (size_t x = 1; x < n - 1; ++x) {
-            new_grid[y * n + x] = 0.2 * (grid[y * n + x]
-                                         + grid[y * (n - 1) + x]
-                                         + grid[y * n + x + 1]
-                                         + grid[y * (n + 1) + x]
-                                         + grid[y * n + x - 1]);
-            error = fmax(error, fabs(grid[y * n + x] - new_grid[y * n + x]));
+double CalculateNext(double *grid, double *new_grid, size_t n, cublasHandle_t handle) {
+    auto *error_grid = new double[n - 2];
+#pragma acc enter data create(error_grid[0:n-2])
+#pragma acc parallel loop async
+    for (int i = 1; i < n - 1; i++) {
+        for (int j = 1; j < n - 1; j++) {
+            new_grid[i * n + j] = 0.2 * (grid[i * n + j]
+                                         + grid[i * (n - 1) + j]
+                                         + grid[i * n + j + 1]
+                                         + grid[i * (n + 1) + j]
+                                         + grid[i * n + j - 1]);
+            error_grid[i - 1] = fmax(error_grid[i - 1], fabs(grid[i * n + j] - new_grid[i * n + j]));
         }
     }
+#pragma acc update host(new_grid[:n * n]) async
+#pragma acc wait
+    int max_err_id = 0;
+#pragma acc host_data use_device(error_grid)
+    {
+        nvtxRangePushA("cublas");
+        cublasIdamax(handle, n - 2, error_grid, 1, &max_err_id);
+        nvtxRangePop();
+    }
+    double error = error_grid[max_err_id - 1];
+#pragma acc exit data delete (error_grid[0:n-2])
+    delete[](error_grid);
     return error;
 }
 
@@ -102,21 +116,11 @@ void PrintMatrix(const std::vector<double> &matrix, size_t n) {
     }
 }
 
-void StupidSwap(double *grid, const double *new_grid, size_t n) {
-#pragma acc parallel loop present(grid, new_grid)
-    for (int y = 1; y < n - 1; ++y) {
-#pragma acc loop
-        for (int x = 1; x < n - 1; ++x) {
-            grid[y * n + x] = new_grid[y * n + x];
-        }
-    }
-}
-
 int main(int argc, char **argv) {
     nvtxRangePushA("init");
-    double epsilon = 0.000001;
-    size_t n = 256;
-    size_t n_max_iterations = 1000000;
+    double epsilon{};
+    size_t n{};
+    size_t n_max_iterations{};
     if (!ProgramOptions(argc, argv, epsilon, n, n_max_iterations))
         return 0;
 
@@ -128,10 +132,12 @@ int main(int argc, char **argv) {
     size_t last_step{};
     double error = 1;
     auto const start = std::chrono::steady_clock::now();
+    cublasHandle_t handle;
+    cublasCreate(&handle);
     nvtxRangePushA("loop");
     for (size_t i{}; i < n_max_iterations && error > epsilon; ++i) {
         nvtxRangePushA("calc");
-        error = CalculateNext(grid, new_grid, n);
+        error = CalculateNext(grid, new_grid, n, handle);
         nvtxRangePop();
         nvtxRangePushA("swap");
         std::swap(grid, new_grid);
@@ -139,6 +145,7 @@ int main(int argc, char **argv) {
         last_step = i;
     }
     nvtxRangePop();
+    cublasDestroy(handle);
     auto const end = std::chrono::steady_clock::now();
     const std::chrono::duration<double> elapsed_seconds(end - start);
     if (n <= 13)
